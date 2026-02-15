@@ -1,67 +1,68 @@
-🚀 Parallel Text Handling Processor
-====================================
+# Parallel Text Handling Processor
 
+## Overview
 
-📌 Overview
--------------
+Parallel Text Handling Processor is a Python project for processing and analyzing large volumes of text and review data.
+It combines multiprocessing-based file processing, rule-based sentiment scoring, regex-based pattern detection, and SQLite-backed storage.
 
-Parallel Text Handling Processor is a scalable text analytics system built in Python for high-volume review processing.
-It performs rule-based and pattern-driven sentiment analysis, stores results in SQLite, and benchmarks database performance before and after optimization.
-The system is designed to efficiently handle large datasets (up to 1 million records) using parallel processing techniques.
+## Features
 
-✨ Key Features
-------------------
+1. Parallel text processing using Python multiprocessing
+2. Rule-based sentiment scoring (Positive / Negative / Neutral)
+3. Pattern-based issue detection with regular expressions
+4. SQLite database storage and batch insertion
+5. Query/index benchmarking for performance comparison
+6. Sequential vs parallel runtime comparison on sample text files
 
-⚡ Parallel text processing using Python multiprocessing
+## Project Structure
 
-🧠 Rule-based sentiment scoring (Positive / Negative / Neutral)
-
-🔎 Pattern-based issue detection using regular expressions
-
-🗄️ SQLite database storage
-
-📦 Batch insertion for optimized database writes
-
-📊 Performance benchmarking (before & after indexing)
-
-📈 Index-based query optimization
-
-🏗️ Project Architecture
-------------------------
-
+```text
 Parallel-Text-Processor/
+|-- benchmark.py
+|-- database.py
+|-- processor.py
+|-- rules.py
+|-- main.py
+|-- main1.py
+|-- Interface.py
+|-- texts/
+|   |-- large1.txt
+|   |-- mixed1.txt
+|   |-- negative1.txt
+|   |-- neutral1.txt
+|   `-- positive1.txt
+`-- Reviews.csv
+```
 
-│
+## How It Works
 
-├── rules.py  # Sentiment rules & pattern detection logic
+1. Reads text and review data from files and CSV inputs.
+2. Extracts and normalizes tokens using regex and rule dictionaries.
+3. Computes sentiment and pattern matches.
+4. Stores and queries processed data in SQLite.
+5. Compares sequential and multiprocessing execution times.
 
-├── processor.py    # Processes individual reviews
+## Run
 
-├── database.py     # Database setup and indexing
+1. Install dependencies:
 
-├── benchmark.py    # Query performance measurement
+```bash
+pip install -r requirements.txt
+```
 
-├── main.py         # Entry point (execution controller)
+2. Run the main pipeline:
 
-How to Run
-----------
+```bash
+python main.py
+```
 
-Install Python 3.10+
+3. (Optional) Run Streamlit interface:
 
-Place Reviews.csv in the project root
+```bash
+streamlit run Interface.py
+```
 
-Run:
+## Requirements
 
-    python main.py
-
-Requirements
-------------
-
-Python 3.10+
-
-SQLite (built-in)
-
-
-
-Python 3.10+
-SQLite (built-in)
+1. Python 3.10+
+2. SQLite (built-in)
