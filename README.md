@@ -1,23 +1,16 @@
 # Parallel Text Handling Processor
 
-## BERT (TensorFlow) Sentiment Fine-Tuning
-
-This workspace also includes TensorFlow-based scripts to fine-tune and run inference with BERT for binary sentiment analysis.
 
 Files:
 
 - `requirements.txt` for Python dependencies
-- `bert_tf_finetune.py` to fine-tune BERT on `Reviews.csv`
-- `bert_tf_inference.py` to run predictions on a text or a folder of text files
-
+  
 Quick start:
 
 ```bash
 python -m venv .venv
 .\.venv\Scripts\activate
 pip install -r requirements.txt
-python bert_tf_finetune.py --csv Reviews.csv --text_col Text --label_col Score --output_dir ./bert_sentiment --epochs 2 --batch_size 16
-python bert_tf_inference.py --model_dir ./bert_sentiment --text "This product is great!"
 ```
 
 ## Overview
@@ -43,7 +36,6 @@ Parallel-Text-Processor/
 |-- processor.py
 |-- rules.py
 |-- main.py
-|-- main1.py
 |-- Interface.py
 |-- texts/
 |   |-- large1.txt
@@ -76,7 +68,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-3. (Optional) Run Streamlit interface:
+3.
 
 ```bash
 streamlit run Interface.py
