@@ -2,247 +2,306 @@ import streamlit as st
 import pandas as pd
 import time
 from multiprocessing import Pool, cpu_count
+import matplotlib.pyplot as plt
 
 from processor import process_text
 from database import setup_database, insert_results
-from mail import send_email
+
+SENTIMENT_ORDER = ["Positive", "Negative", "Neutral"]
+SENTIMENT_COLORS = {
+    "Positive": "#2e8b57",
+    "Negative": "#d9534f",
+    "Neutral": "#8a93a6",
+}
+ISSUE_SUMMARY_KEYS = [
+    ("phishing", "Phishing"),
+    ("scam_risk", "Scam"),
+    ("delivery_issue", "Delivery Issue"),
+    ("product_damage", "Product Damage"),
+    ("customer_service", "Customer Service"),
+]
+
+# Reserve one CPU core for the OS and use remaining cores for workers.
+WORKER_PROCESSES = max(1, cpu_count() - 1)
+
+
+def format_timestamp(value):
+    parsed = pd.to_datetime(value, errors="coerce")
+    if pd.isna(parsed):
+        return str(value)
+    return parsed.strftime("%d %b %Y, %I:%M %p").replace(", 0", ", ")
+
+
+def build_sentiment_counts(result_df):
+    return result_df["Sentiment"].value_counts().reindex(SENTIMENT_ORDER, fill_value=0)
+
+
+def build_issue_counts(result_df):
+    pattern_sets = (
+        result_df["Patterns"]
+        .fillna("none")
+        .astype(str)
+        .str.lower()
+        .apply(lambda value: {item.strip() for item in value.split(",") if item.strip() and item.strip() != "none"})
+    )
+
+    return {
+        label: int(pattern_sets.apply(lambda labels: key in labels).sum())
+        for key, label in ISSUE_SUMMARY_KEYS
+    }
+
+
+def save_chart_images(result_df):
+    counts = build_sentiment_counts(result_df)
+    total = max(int(counts.sum()), 1)
+    percentages = (counts / total) * 100
+    colors = [SENTIMENT_COLORS[label] for label in counts.index]
+
+    fig, ax = plt.subplots(figsize=(3.4, 3.4), dpi=120)
+    ax.pie(
+        counts.values,
+        labels=counts.index,
+        colors=colors,
+        autopct="%1.1f%%",
+        startangle=90,
+        textprops={"fontsize": 9},
+    )
+    ax.set_ylabel("")
+    fig.tight_layout()
+    pie_path = "pie_chart.png"
+    fig.savefig(pie_path)
+    plt.close(fig)
+
+    fig, ax = plt.subplots(figsize=(4.2, 3.2), dpi=120)
+    bars = ax.bar(counts.index, counts.values, color=colors, width=0.58)
+    ax.bar_label(
+        bars,
+        labels=[f"{percentage:.1f}%" for percentage in percentages],
+        padding=3,
+        fontsize=9,
+    )
+    ax.tick_params(axis="x", rotation=0)
+    ax.set_xlabel("")
+    ax.set_ylabel("Reviews")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.set_ylim(0, max(counts.max() * 1.2, 1))
+    fig.tight_layout()
+    bar_path = "bar_chart.png"
+    fig.savefig(bar_path)
+    plt.close(fig)
+
+    issue_counts = build_issue_counts(result_df)
+    issue_labels = [label for _, label in ISSUE_SUMMARY_KEYS]
+    issue_values = [issue_counts[label] for label in issue_labels]
+
+    fig, ax = plt.subplots(figsize=(7.2, 3.4), dpi=120)
+    bars = ax.bar(issue_labels, issue_values, color="#4f6a8a", width=0.58)
+    ax.bar_label(bars, padding=3, fontsize=9)
+    ax.tick_params(axis="x", rotation=20)
+    ax.set_xlabel("")
+    ax.set_ylabel("Reviews")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.set_ylim(0, max(max(issue_values) * 1.25 if issue_values else 0, 1))
+    fig.tight_layout()
+    issue_path = "issue_pattern_chart.png"
+    fig.savefig(issue_path)
+    plt.close(fig)
+
+    return pie_path, bar_path, issue_path
 
 st.set_page_config(page_title="Parallel Text Processor", layout="wide")
 
+st.markdown(
+    """
+    <style>
+    .stApp {
+        background: linear-gradient(180deg, #f2f4f8 0%, #eef1f6 100%);
+    }
+    [data-testid="stSidebar"] {
+        background: #e9edf3;
+        border-right: 1px solid #cfd6e2;
+    }
+    h1, h2, h3 {
+        color: #1c3559;
+    }
+    .stButton > button {
+        border-radius: 10px;
+        border: 1px solid #b5bcc8;
+        background-color: #f3f5f9;
+        color: #243b5f;
+        font-weight: 600;
+        padding: 0.4rem 1rem;
+    }
+    .stButton > button:hover {
+        border-color: #7f8ca3;
+        background-color: #e9edf5;
+    }
+    .stDownloadButton > button {
+        border-radius: 10px;
+    }
+    [data-testid="stTextInputRootElement"] input {
+        background: #ffffff;
+        border: 1px solid #b8c2d3;
+        border-radius: 10px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 st.title("Parallel Text Handling Processor")
 
-# ---------------- SESSION STATE ----------------
-if "files" not in st.session_state:
-    st.session_state.files = {}
-
-if "texts" not in st.session_state:
-    st.session_state.texts = []
-
+# session storage
 if "result_df" not in st.session_state:
     st.session_state.result_df = None
 
-if "processing_time" not in st.session_state:
-    st.session_state.processing_time = None
-
-if "pie_chart_path" not in st.session_state:
-    st.session_state.pie_chart_path = None
-
 # ---------------- FILE UPLOAD ----------------
-uploaded_files = st.file_uploader(
-    "Upload Files",
-    type=["csv", "txt", "xlsx"],
-    accept_multiple_files=True
+st.sidebar.header("Navigation")
+st.sidebar.subheader("Upload Files")
+
+uploaded_file = st.sidebar.file_uploader(
+    "Drag and drop files here",
+    type=["csv","txt","xlsx"]
 )
 
-# ---------------- STORE FILE DATA ----------------
-if uploaded_files:
+texts = []
 
-    for uploaded_file in uploaded_files:
+if uploaded_file:
 
-        filename = uploaded_file.name.lower()
+    file_size_mb = uploaded_file.size / (1024 * 1024)
+    st.sidebar.write(f"Selected: {uploaded_file.name}")
+    st.sidebar.caption(f"{file_size_mb:.1f} MB")
 
-        try:
-            uploaded_file.seek(0)
+    filename = uploaded_file.name.lower()
 
-            if filename.endswith(".csv"):
-                df = pd.read_csv(uploaded_file, low_memory=False)
-                st.session_state.files[uploaded_file.name] = df
+    try:
+        if filename.endswith(".csv"):
+            df = pd.read_csv(uploaded_file, usecols=["Text"])
+            texts = df["Text"].dropna().astype(str).str.strip()
+            texts = texts[texts != ""].tolist()
+            st.dataframe(
+                df.head(50),
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "Text": st.column_config.TextColumn("Review Text", width="large")
+                },
+            )
 
-            elif filename.endswith(".xlsx"):
-                df = pd.read_excel(uploaded_file)
-                st.session_state.files[uploaded_file.name] = df
+        elif filename.endswith(".xlsx"):
+            df = pd.read_excel(uploaded_file, usecols=["Text"])
+            texts = df["Text"].dropna().astype(str).str.strip()
+            texts = texts[texts != ""].tolist()
+            st.dataframe(
+                df.head(50),
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "Text": st.column_config.TextColumn("Review Text", width="large")
+                },
+            )
 
-            elif filename.endswith(".txt"):
-                content = uploaded_file.read().decode("utf-8")
-                st.session_state.files[uploaded_file.name] = content
+        elif filename.endswith(".txt"):
+            content = uploaded_file.read().decode("utf-8")
+            texts = [line.strip() for line in content.splitlines() if line.strip()]
+            preview_df = pd.DataFrame({"Text": texts[:50]})
+            st.dataframe(
+                preview_df,
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "Text": st.column_config.TextColumn("Review Text", width="large")
+                },
+            )
+    except ValueError:
+        st.error("The uploaded file must contain a 'Text' column.")
+    except pd.errors.EmptyDataError:
+        st.error("The uploaded file is empty.")
+    except UnicodeDecodeError:
+        st.error("The text file could not be decoded as UTF-8.")
+    except Exception as exc:
+        st.error(f"Could not read the uploaded file: {exc}")
 
-        except Exception as e:
-            st.error(f"Error reading {uploaded_file.name}: {e}")
+    if uploaded_file and not texts:
+        st.warning("The uploaded file does not contain any non-empty text rows to process.")
 
-# ---------------- PAGE LAYOUT ----------------
-left, right = st.columns([1,3])
+# ---------------- PROCESS ----------------
+if texts:
 
-# ---------------- LEFT PANEL ----------------
-with left:
+    st.write("Total Reviews:", f"{len(texts):,}")
+    st.sidebar.divider()
+    st.sidebar.subheader("System Info")
+    st.sidebar.write("CPU Cores:", cpu_count())
+    st.sidebar.write("Worker Processes:", WORKER_PROCESSES)
+    st.sidebar.write("Reserved for OS:", 1)
 
-    st.subheader("Uploaded Files")
+    if st.button("Run Sentiment Processing"):
 
-    if st.session_state.files:
+        setup_database()
 
-        selected_file = st.radio(
-            "Select File",
-            list(st.session_state.files.keys())
+        start = time.time()
+
+        progress_bar = st.progress(0)
+        status_placeholder = st.empty()
+        results = []
+        update_interval = max(1, len(texts) // 200)
+
+        with st.spinner("Processing Reviews..."):
+            with Pool(WORKER_PROCESSES) as pool:
+                for index, result in enumerate(pool.imap(process_text, texts, chunksize=1000), start=1):
+                    results.append(result)
+                    if index == 1 or index % update_interval == 0 or index == len(texts):
+                        progress_bar.progress(index / len(texts))
+                        status_placeholder.caption(f"Processing reviews... {index:,}/{len(texts):,}")
+
+        end = time.time()
+        progress_bar.empty()
+        status_placeholder.empty()
+
+        processing_time = round(end-start,2)
+
+        insert_results(results)
+
+        result_df = pd.DataFrame(
+            results,
+            columns=["Text","Sentiment Score","Sentiment","Patterns","Timestamp"]
         )
 
-    else:
-        st.info("Upload files to view.")
+        result_df["Patterns"] = result_df["Patterns"].replace("", "none").fillna("none")
+        result_df["Timestamp"] = result_df["Timestamp"].apply(format_timestamp)
 
-# ---------------- RIGHT PANEL ----------------
-with right:
+        st.session_state.result_df = result_df
+        st.session_state.processing_time = processing_time
+        avg_ms_per_review = (processing_time / len(result_df)) * 1000 if len(result_df) else 0
+        st.session_state.avg_ms_per_review = round(avg_ms_per_review, 2)
+        issue_counts = build_issue_counts(result_df)
+        issue_summary_text = ", ".join(
+            f"{label}: {issue_counts[label]:,}" for _, label in ISSUE_SUMMARY_KEYS
+        )
+        st.session_state.processing_summary = (
+            f"{len(result_df):,} reviews processed in {processing_time:.2f}s "
+            f"({avg_ms_per_review:.2f} ms per review). "
+            f"Key issues - {issue_summary_text}"
+        )
 
-    if st.session_state.files:
+        # ---------- SAVE FULL CSV ----------
+        full_csv_path = "sentiment_results_full.csv"
+        result_df.to_csv(full_csv_path,index=False)
+        st.session_state.full_csv_path = full_csv_path
 
-        content = st.session_state.files[selected_file]
+        # ---------- SAVE SAMPLE CSV ----------
+        sample_csv_path = "sentiment_results_sample.csv"
+        result_df.head(5000).to_csv(sample_csv_path,index=False)
+        st.session_state.sample_csv_path = sample_csv_path
 
-        st.subheader("File Preview")
+        pie_path, bar_path, issue_path = save_chart_images(result_df)
 
-        # ---------- DATAFRAME FILE ----------
-        if isinstance(content, pd.DataFrame):
+        st.session_state.pie_chart_path = pie_path
+        st.session_state.bar_chart_path = bar_path
+        st.session_state.issue_chart_path = issue_path
 
-            st.dataframe(content.head(100), use_container_width=True)
+        st.success(st.session_state.processing_summary)
 
-            if "Text" in content.columns:
-                st.session_state.texts = content["Text"].dropna().astype(str).tolist()
-            else:
-                st.error("File must contain a 'Text' column")
-                st.session_state.texts = []
-
-        # ---------- TEXT FILE ----------
-        else:
-
-            st.text_area("Content", content, height=300)
-            st.session_state.texts = content.splitlines()
-
-        texts = st.session_state.texts
-
-        # ---------------- PROCESS BUTTON ----------------
-        if texts:
-
-            st.write("Total Reviews Loaded:", len(texts))
-
-            if st.button("Run Sentiment Processing"):
-
-                setup_database()
-
-                start_time = time.time()
-
-                with st.spinner("Processing reviews..."):
-
-                    with Pool(cpu_count()) as pool:
-                        results = list(pool.imap(process_text, texts, chunksize=1000))
-
-                end_time = time.time()
-
-                processing_time = round(end_time - start_time, 2)
-
-                insert_results(results)
-
-                # Persist results so Send Email works across reruns.
-                st.session_state.result_df = pd.DataFrame(
-                    results,
-                    columns=["Text", "Score", "Sentiment", "Patterns", "Timestamp"]
-                )
-                st.session_state.processing_time = processing_time
-
-                import matplotlib.pyplot as plt
-                fig, ax = plt.subplots()
-                st.session_state.result_df["Sentiment"].value_counts().plot.pie(
-                    autopct="%1.1f%%",
-                    ax=ax
-                )
-                pie_chart_path = "sentiment_pie_chart.png"
-                fig.savefig(pie_chart_path, dpi=100, bbox_inches="tight")
-                plt.close(fig)
-                st.session_state.pie_chart_path = pie_chart_path
-
-                st.success("Processing Completed")
-
-            if st.session_state.result_df is not None:
-                result_df = st.session_state.result_df
-                processing_time = st.session_state.processing_time
-                pie_chart_path = st.session_state.pie_chart_path
-
-                st.write("Processing Time:", processing_time, "seconds")
-
-                # ---------------- SUMMARY ----------------
-                st.subheader("Summary")
-
-                total = len(result_df)
-                positives = (result_df["Sentiment"] == "Positive").sum()
-                negatives = (result_df["Sentiment"] == "Negative").sum()
-                neutrals = (result_df["Sentiment"] == "Neutral").sum()
-
-                col1, col2, col3, col4 = st.columns(4)
-
-                col1.metric("Total Reviews", total)
-                col2.metric("Positive", positives)
-                col3.metric("Negative", negatives)
-                col4.metric("Neutral", neutrals)
-
-                # ---------------- CHART ----------------
-                st.subheader("Sentiment Distribution")
-                st.bar_chart(result_df["Sentiment"].value_counts())
-
-                import matplotlib.pyplot as plt
-                fig, ax = plt.subplots()
-                result_df["Sentiment"].value_counts().plot.pie(
-                    autopct="%1.1f%%",
-                    ax=ax
-                )
-                st.pyplot(fig)
-                plt.close(fig)
-
-                # ---------------- SAMPLE REVIEWS ----------------
-                st.subheader("Example Reviews")
-
-                c1, c2, c3 = st.columns(3)
-
-                with c1:
-                    st.write("Positive Examples")
-                    st.write(
-                        result_df[result_df["Sentiment"] == "Positive"]["Text"].head(10)
-                    )
-
-                with c2:
-                    st.write("Negative Examples")
-                    st.write(
-                        result_df[result_df["Sentiment"] == "Negative"]["Text"].head(10)
-                    )
-
-                with c3:
-                    st.write("Neutral Examples")
-                    st.write(
-                        result_df[result_df["Sentiment"] == "Neutral"]["Text"].head(10)
-                    )
-
-                # ---------------- FULL TABLE ----------------
-                with st.expander("Show Full Results (First 1000 rows)"):
-                    st.dataframe(result_df.head(1000), use_container_width=True)
-                    st.write(f"Total rows in results: {len(result_df)}")
-                    st.write("Note: CSV with all results will be sent via email")
-
-                # ---------------- EMAIL SECTION ----------------
-                st.subheader("Send Results by Email")
-
-                email = st.text_input("Enter Email Address", placeholder="example@gmail.com")
-
-                if st.button("Send Email"):
-                    if not email or email.strip() == "":
-                        st.error("Please enter a valid email address")
-                    elif "@" not in email or "." not in email:
-                        st.error("Invalid email format. Please enter a valid email address")
-                    else:
-                        try:
-                            st.write(f"Sending email to: {email}")
-
-                            # Send report summary in email body and include chart only.
-                            attachments = []
-                            if pie_chart_path:
-                                attachments.append((pie_chart_path, "sentiment_pie_chart.png"))
-
-                            response = send_email(
-                                email,
-                                total,
-                                positives,
-                                negatives,
-                                neutrals,
-                                processing_time,
-                                attachments=attachments
-                            )
-
-                            message_id = response.get("id") if isinstance(response, dict) else "N/A"
-                            st.success(f"Email sent successfully with attachments to {email}")
-                            st.info(f"Gmail Message ID: {message_id}")
-                        except Exception as e:
-                            st.error(f"Email failed: {str(e)}")
-                            
+        st.info("Open the Results page from the sidebar.")
