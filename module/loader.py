@@ -1,4 +1,3 @@
-# processor.py
 from loader.processor import process_text
 
 __all__ = ["process_text"]
