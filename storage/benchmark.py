@@ -1,7 +1,7 @@
+# benchmark.py
 import sqlite3
 import time
-from storage.database import DB_NAME
-
+from module.constants import DB_NAME
 
 def benchmark_queries():
     conn = sqlite3.connect(DB_NAME)
@@ -10,7 +10,7 @@ def benchmark_queries():
     queries = [
         "SELECT COUNT(*) FROM reviews WHERE sentiment='Positive'",
         "SELECT AVG(score) FROM reviews",
-        "SELECT * FROM reviews WHERE score > 2"
+        "SELECT * FROM reviews WHERE score > 2 LIMIT 1000"
     ]
 
     start = time.time()

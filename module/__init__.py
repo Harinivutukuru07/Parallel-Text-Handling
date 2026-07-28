@@ -1,4 +1,11 @@
-from .loader import process_text
-from .scorer import calculate_score, assign_sentiment, detect_patterns
-from .search import benchmark_queries
-from .storage import setup_database, insert_results, apply_indexes, DB_NAME
+# __init__.py
+from .constants import DB_NAME, POSITIVE_WORDS, NEGATIVE_WORDS, NEGATIONS, INTENSIFIERS, DIMINISHERS, CONTRAST_WORDS, TOKEN_PATTERN, PATTERN_RULES
+from .config import WORKER_PROCESSES, BATCH_SIZE
+from .logger import logger
+from .helpers import time_it
+
+__all__ = [
+    "DB_NAME", "POSITIVE_WORDS", "NEGATIVE_WORDS", "NEGATIONS", 
+    "INTENSIFIERS", "DIMINISHERS", "CONTRAST_WORDS", "TOKEN_PATTERN", 
+    "PATTERN_RULES", "WORKER_PROCESSES", "BATCH_SIZE", "logger", "time_it"
+]

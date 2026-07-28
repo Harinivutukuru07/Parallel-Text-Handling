@@ -1,11 +1,13 @@
 import streamlit as st
 import pandas as pd
 import time
+import sqlite3
 from multiprocessing import Pool, cpu_count
 import matplotlib.pyplot as plt
 
-from processor import process_text
-from database import setup_database, insert_results
+from processor.processor import process_text
+from storage.database import setup_database
+from storage.queries import insert_results
 
 SENTIMENT_ORDER = ["Positive", "Negative", "Neutral"]
 SENTIMENT_COLORS = {
@@ -238,8 +240,11 @@ if texts:
     st.sidebar.write("Reserved for OS:", 1)
 
     if st.button("Run Sentiment Processing"):
-
-        setup_database()
+        try:
+            setup_database()
+        except sqlite3.OperationalError as exc:
+            st.error(f"Database is busy. Close other tools using sentiment_project.db and try again. Details: {exc}")
+            st.stop()
 
         start = time.time()
 
@@ -262,7 +267,11 @@ if texts:
 
         processing_time = round(end-start,2)
 
-        insert_results(results)
+        try:
+            insert_results(results)
+        except sqlite3.OperationalError as exc:
+            st.error(f"Could not save results because the database is busy. Details: {exc}")
+            st.stop()
 
         result_df = pd.DataFrame(
             results,

@@ -1,3 +1,4 @@
 """Compatibility entrypoint for Streamlit UI."""
 
-from Interface import *  # noqa: F401,F403
+with open("Interface.py", encoding="utf-8") as f:
+    exec(f.read())
